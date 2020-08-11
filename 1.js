@@ -1,79 +1,78 @@
-const ReserveMatch = require('../models').ReserveMatch;
-const ReserveMatchDetails = require('../models').ReserveMatchDetails;
-const { promisify } = require('util');
+const { ReserveMatch, ReserveMatchDetails } = require('../models');
+const { Cache, Constants, Common } = require('../../../helpers');
 
 module.exports = {
 
-    //Complexity 9
+    //Complexity 12
     async startMatch() {
-        // ...
 
-        let questions = []; // Get Questins from DB
+
+        let questions = [] // Get Questins from DB
 
         let cacheDataStructure = {
-            questions,
-            user_answers: [],
-        };
+            questions
+        }
 
-        client.set('main-match-' + mainMatch.id, JSON.stringify(cacheDataStructure), 'EX', 2400);
+        await Cache.set(Constants.MainMatch.Events.Questions + mainMatchInfo.id, cacheDataStructure, 2400);
 
-        // remove is_correct indicator from Options 
+        // remove is_correct indicator from Options (inline) 
         // to send it to user
-
-        // ...
-    },
-
-    //Complexity 30
-    async set_answer(dataFromClient) {
-        // ...
-
-        // Read from shared record in cache
-        const getAsync = promisify(client.get).bind(client);
-        getAsync('main-match-' + dataFromClient.main_match_id).then(result => {
-            let gameDataInCache = JSON.parse(result);
-            if (gameDataInCache !== null) {
-
-                // current User Answers In Cache
-                gameDataInCache.user_answers.push({
-                    // ...
-                });
-                client.set('main-match-' + dataFromClient.main_match_id, JSON.stringify(gameDataInCache), 'EX', 2400); // expired in 20 minutes later
+        questions = questions.map(question => {
+            let optionsWithoutAnswer = question.options.map(opt => {
+                return {
+                    id: opt.id,
+                    option: opt.option
+                }
+            });
+            return {
+                //...
+                options: Common.shuffle_array(optionsWithoutAnswer)
             }
-
         });
+
+        // ...
     },
 
-    //Complexity 9
+    //Complexity 21
+    async answer(clientInfo) {
+
+        // ...
+
+        // Read from User specific record
+        let currentUserAnswersInCache = await Cache.get(Constants.MainMatch.Events.UserAnswers + clientInfo.id);
+
+        currentUserAnswersInCache.push({
+            //... put user answer to his/her specific cache record
+        });
+
+        // Write back to cache
+        await Cache.set(Constants.MainMatch.Events.UserAnswers + clientInfo.id, currentUserAnswersInCache, 2400);
+
+        // ...
+    },
+
+    //Complexity 6
     async finishMatch(main_match_id) {
 
         // All players
-        let reservedMatch = await ReserveMatch.findAll({
-            where: {
-                //...
-            }
-        });
+        let reservedUsers = await ReserveMatch.findAll({ where: { MainMatchId: main_match_id } });
 
-        const getAsync = promisify(client.get).bind(client);
-        getAsync('main-match-' + main_match_id).then(result => {
-            if (result !== null) {
-                let jsonResult = JSON.parse(result);
-                if (jsonResult !== null) {
+        Promise.all(
+            reservedUsers.map(async ru => {
 
-                    Promise.all(reservedMatch.map(async reserve => {
+                // Get each user's answer from separate cache records
+                let totalAnswers = [];
 
-                        jsonResult.user_answers.filter(ans => {
-                            if (ans.user_id === reserve.UserId) {
-                                return ans;
-                            }
-                        })
-                            .forEach(() => {
-                                ReserveMatchDetails.create({
-                                    // ... Model properties
-                                })
-                            });
-                    }));
-                }
-            }
-        });
+                let userAnswers = await Cache.get(Constants.MainMatch.Events.UserAnswers + ru.UserId)
+                userAnswers.forEach(() => {
+                    totalAnswers.push({
+                        // ... Model properties
+                    });
+                });
+
+                // Bulk create
+                await ReserveMatchDetails.bulkCreate(totalAnswers);
+
+            }));
     },
-}
+};
