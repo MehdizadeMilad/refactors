@@ -1,154 +1,79 @@
-const { User } = require('../../../modules/user/models');
-const { MainMatch, MainMatchQuiz, ReserveMatch, ReserveMatchDetails } = require('../models');
-const { Cache, UserActivity, Constants, Common, FCM, Notification } = require('../../../helpers');
-
-const models = require('../models');
-const Op = models.Sequelize.Op;
-const db = require('../models/index');
-
-const config = require('../../../config/config.json');
+const ReserveMatch = require('../models').ReserveMatch;
+const ReserveMatchDetails = require('../models').ReserveMatchDetails;
+const { promisify } = require('util');
 
 module.exports = {
 
-    //Complexity 12
-    async startMatch(sockets) {
-        let minuteAgo = new Date();
-        minuteAgo.setTime(minuteAgo.getTime() - 60000);
-        try {
-            let mainMatchInfo = await MainMatch.findOne({
-                where: {
-                    //...
-                },
-            });
-            if (!mainMatchInfo) return;
+    //Complexity 9
+    async startMatch() {
+        // ...
 
-            let questions = await MainMatchQuiz.findAll({
-                where: {
-                    //...
-                },
-            });
-            await Cache.set(Constants.MainMatch.Events.Questions + mainMatchInfo.id, questions, 2400);
+        let questions = []; // Get Questins from DB
 
-            questions = questions.map(question => {
-                let optionsWithoutAnswer = question.options.map(opt => {
-                    return {
-                        id: opt.id,
-                        option: opt.option
-                    }
-                });
-                return {
-                    id: question.id,
-                    text: question.question,
-                    image: question.image_name ? (config.hostname + '/images/questions/' + question.image_name) : '',
-                    audio: question.audio_file_name ? (config.hostname + '/audio/questions/' + question.audio_file_name) : '',
-                    options: Common.shuffle_array(optionsWithoutAnswer)
-                }
-            });
+        let cacheDataStructure = {
+            questions,
+            user_answers: [],
+        };
 
-            let room_id = Constants.MainMatch.Events.Room + mainMatchInfo.id;
-            for (let i = 0; i < questions.length; i++) {
-                await Cache.set(Constants.MainMatch.Events.CurrentQuestionIndex + mainMatchInfo.id, { index: i }, 2400);
-                await module.exports.delay_question(sockets, mainMatchInfo.id, room_id, questions, i);
-            }
+        client.set('main-match-' + mainMatch.id, JSON.stringify(cacheDataStructure), 'EX', 2400);
 
-            module.exports.finishMatch(mainMatchInfo.id);
-        }
-        catch (error) {
-            console.log(error);
-        }
+        // remove is_correct indicator from Options 
+        // to send it to user
+
+        // ...
     },
 
-    //Complexity 21
-    async answer(user, data) {
-        if (!(data.main_match_id && data.question_id)) {
-            console.log('param error');
-            return false;
-        }
+    //Complexity 30
+    async set_answer(dataFromClient) {
+        // ...
 
-        let currentQuestionIndex = await Cache.get(Constants.MainMatch.Events.CurrentQuestionIndex + data.main_match_id);
-        currentQuestionIndex = currentQuestionIndex.index;
+        // Read from shared record in cache
+        const getAsync = promisify(client.get).bind(client);
+        getAsync('main-match-' + dataFromClient.main_match_id).then(result => {
+            let gameDataInCache = JSON.parse(result);
+            if (gameDataInCache !== null) {
 
-        let isCorrect = 0;
-        let score = 0;
-        try {
-
-            let questions = await Cache.get(Constants.MainMatch.Events.Questions + data.main_match_id);
-
-            let currentQuestion = questions.filter(q => (q.id === data.question_id))[0];
-
-            if (data.option_id) {
-                let userSelectedOption = currentQuestion.options
-                    .filter(opt => (opt.id === data.option_id))[0];
-
-                if (userSelectedOption) {
-                    isCorrect = userSelectedOption.is_correct;
-                    score = UserActivity.calculateScore(data.time, isCorrect, false);
-                    if (!isCorrect && currentQuestionIndex >= 10) score -= 5;
-                }
-            }
-
-            Notification.emitToClient(user.id, Constants.MainMatch.Events.QuestionResult, {
-                // ...
-            });
-
-            // Read from User specific record
-            let currentUserAnswers = await Cache.get(Constants.MainMatch.Events.UserAnswers + user.id);
-
-            let isAnswered = currentUserAnswers
-                .filter(a => (a.user_id === user.id && a.question_id === data.question_id))[0];
-
-            if (!isAnswered) {
-                currentUserAnswers.push({
-                    user_id: user.id,
-                    question_id: data.question_id,
-                    option_id: data.option_id,
-                    is_correct: isCorrect,
-                    time: data.time,
-                    score: score
+                // current User Answers In Cache
+                gameDataInCache.user_answers.push({
+                    // ...
                 });
-
-                // Write to User specific record
-                await Cache.set(Constants.MainMatch.Events.UserAnswers + user.id, currentUserAnswers, 2400);
+                client.set('main-match-' + dataFromClient.main_match_id, JSON.stringify(gameDataInCache), 'EX', 2400); // expired in 20 minutes later
             }
-        }
-        catch (err) {
-            console.log('main match SetAnswer error:', err);
-        }
+
+        });
     },
 
-    //Complexity 6
+    //Complexity 9
     async finishMatch(main_match_id) {
 
-        let reservedUsers = await ReserveMatch.findAll({ where: { MainMatchId: main_match_id } });
+        // All players
+        let reservedMatch = await ReserveMatch.findAll({
+            where: {
+                //...
+            }
+        });
 
-        Promise.all(
-            reservedUsers.map(async ru => {
-                let totalScore = 0;
-                let totalAnswers = [];
+        const getAsync = promisify(client.get).bind(client);
+        getAsync('main-match-' + main_match_id).then(result => {
+            if (result !== null) {
+                let jsonResult = JSON.parse(result);
+                if (jsonResult !== null) {
 
-                let userAnswers = await Cache.get(Constants.MainMatch.Events.UserAnswers + ru.UserId)
-                if (userAnswers) {
-                    userAnswers.forEach(answer => {
-                        totalScore += answer.score;
-                        totalAnswers.push({
-                            ReserveMatchId: ru.id,
-                            MainMatchQuizId: answer.question_id,
-                            time: answer.time,
-                            score: answer.score
-                        });
-                    });
-                    await ReserveMatchDetails.bulkCreate(totalAnswers)
-                        .catch(err => {
-                            console.log('bulk MainMatch failed', err);
-                            console.log('TOTAL Answers:', JSON.stringify(totalAnswers));
-                        });
+                    Promise.all(reservedMatch.map(async reserve => {
 
+                        jsonResult.user_answers.filter(ans => {
+                            if (ans.user_id === reserve.UserId) {
+                                return ans;
+                            }
+                        })
+                            .forEach(() => {
+                                ReserveMatchDetails.create({
+                                    // ... Model properties
+                                })
+                            });
+                    }));
                 }
-                else {
-                    console.log('user answers not found!', ru.UserId)
-                }
-            })).catch(err => {
-                console.log(err);
-            });
+            }
+        });
     },
-};
+}
