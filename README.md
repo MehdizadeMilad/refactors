@@ -72,3 +72,12 @@ let currentQuestionOptions = (questions.filter(q => q.question.id === questionId
 ```
 
 > To see details, [click here](https://github.com/MehdizadeMilad/refactors/commit/8680c972af24add625df3462b5f6ae2fd38cb0ed)
+
+----
+# [3.js](https://github.com/MehdizadeMilad/refactors/blob/master/3.js)
+
+this code is part of a functionality in our API which called more than 1000 times a day.
+
+##### reduced ~30 milliseconds in each run. 
+
+> To se details, [click here](https://github.com/MehdizadeMilad/refactors/commit/7a52a77b3fa8a82083f19da37c043387eb0c8f92)
