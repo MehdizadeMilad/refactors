@@ -1,38 +1,38 @@
 module.exports = {
     getQuestions: async (categoryId) => {
 
-        //Takes ~50 ms
-        let final_questions = await Promise.all(questions.map(async question => {
+        //Takes ~20 ms
 
-            let quizOptions = await QuizOption.findAll({
-                where: {
-                    QuizId: question.id,
-                    is_correct: false,
-                },
-                limit: 3
-            });
+        let questionsIds = questions.map(q => q.id);
 
-            let correctOption = await QuizOption.findOne({
-                where: {
-                    QuizId: question.id,
-                    is_correct: true,
-                },
-                limit: 1
-            });
+        let allQuestionOptions = await QuizOption.findAll({
+            where: {
+                QuizId: {
+                    [Op.in]: questionsIds
+                }
+            }
+        });
 
-            quizOptions.push(
-                correctOption
-            );
+        return questions.map(question => {
+
+            let allOptions = allQuestionOptions.filter(opt => opt.QuizId === question.id);
+
+            let correctOption = allOptions.filter(opt => opt.is_correct);
+
+            let incorrectOptions = allOptions.filter(opt => !opt.is_correct);
+
+            // 3 incorrect options + 1 correct option
+            let options = Common.shuffle_array(incorrectOptions).splice(0, 3).concat(Common.shuffle_array(correctOption).splice(0, 1));
 
             return {
                 question: {
                     id: question.id,
                     text: question.question,
-                    //...
+                    // ...
                 },
-                options: quizOptions.map(q => { return { id: q.id, option: q.option } }),
-                original_options: Common.shuffle_array(quizOptions),
-            };
-        }));
+                options: options.map(q => { return { id: q.id, option: q.option } }),
+                original_options: Common.shuffle_array(options),
+            }
+        });
     }
 }
